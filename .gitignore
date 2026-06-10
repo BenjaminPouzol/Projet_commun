@@ -1,0 +1,19 @@
+# Dépendances
+/vendor/
+/node_modules/
+
+# Fichiers d'environnement locaux
+.env
+.env.local
+
+# Logs
+*.log
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
