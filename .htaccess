@@ -1,0 +1,10 @@
+Options -Indexes
+
+# Autorise PHP à recevoir le path info (nécessaire pour api_sensors.php/current, etc.)
+AcceptPathInfo On
+
+# Encodage et charset par défaut
+AddDefaultCharset UTF-8
+
+# Redirection racine → dashboard principal
+DirectoryIndex index.php

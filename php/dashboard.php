@@ -221,8 +221,13 @@ $lastUpdate     = $machine['last_update']
     </svg>
     Salle de sport — Capteur de proximité
   </a>
+  <ul class="navbar-nav">
+    <li><a href="dashboard.php" class="active">Proximité G9E</a></li>
+    <li><a href="dashboard_global.php">Vue globale</a></li>
+    <li><a href="../public/actionneurs.php">Actionneurs</a></li>
+  </ul>
   <div class="navbar-user">
-    <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?> · G9E</span>
+    <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?></span>
     <a href="deconnexion.php"
        style="color:rgba(255,255,255,.65);font-size:.82rem;padding:.3rem .65rem;
               border:1px solid rgba(255,255,255,.2);border-radius:6px;text-decoration:none">

@@ -45,8 +45,8 @@ function navActive(string $page): string {
     <ul class="navbar-nav" role="list">
       <li><a href="index.php"<?= navActive('index.php') ?>>Accueil</a></li>
       <?php if (estConnecte()): ?>
-        <li><a href="tableau_de_bord.php"<?= navActive('tableau_de_bord.php') ?>>Tableau de bord</a></li>
-        <li><a href="analyse.php"<?= navActive('analyse.php') ?>>Analyse</a></li>
+        <li><a href="../php/dashboard_global.php"<?= navActive('dashboard_global.php') ?>>Vue globale</a></li>
+        <li><a href="../php/dashboard.php"<?= navActive('dashboard.php') ?>>Proximité G9E</a></li>
         <li><a href="actionneurs.php"<?= navActive('actionneurs.php') ?>>Actionneurs</a></li>
       <?php endif; ?>
     </ul>

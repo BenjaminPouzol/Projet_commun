@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/fonctions.php';
+require_once __DIR__ . '/../php/config.php';
 
 exigerConnexion();
 
