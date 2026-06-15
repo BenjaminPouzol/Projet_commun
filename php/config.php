@@ -64,6 +64,20 @@ function getDB(): PDO
         ) ENGINE=InnoDB
     ");
 
+    // ── Sessions d'occupation complètes (durée pré-calculée) ──────────────────
+    // Une ligne par occupation terminée (transition OCCUPEE → LIBRE)
+    $boot->exec("
+        CREATE TABLE IF NOT EXISTS sessions_occupation (
+            id          BIGINT    NOT NULL AUTO_INCREMENT,
+            machine_id  INT       NOT NULL,
+            debut       TIMESTAMP NOT NULL,
+            fin         TIMESTAMP NOT NULL,
+            duree_sec   INT       NOT NULL,
+            PRIMARY KEY (id),
+            INDEX idx_machine_debut (machine_id, debut)
+        ) ENGINE=InnoDB
+    ");
+
     // Ligne initiale : machine LIBRE
     $boot->exec("INSERT IGNORE INTO machine_status (machine_id, statut, team_id)
                  VALUES (1, 'LIBRE', 'G9E')");

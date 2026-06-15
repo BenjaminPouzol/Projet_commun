@@ -41,15 +41,23 @@ function mettreAJourStatut(string $nouveauStatut, int $valeur): void
 {
     $db = getDB();
 
-    // Lire statut actuel
-    $stmt = $db->prepare('SELECT statut FROM machine_status WHERE machine_id = ?');
+    // Lire statut actuel + horodatage de début (pour calculer la durée de session)
+    $stmt = $db->prepare('SELECT statut, depuis FROM machine_status WHERE machine_id = ?');
     $stmt->execute([MACHINE_ID]);
-    $statutActuel = $stmt->fetchColumn();
+    $courant = $stmt->fetch();
 
-    if ($statutActuel === $nouveauStatut) return;   // Pas de changement → rien à faire
+    if (!$courant || $courant['statut'] === $nouveauStatut) return;   // Pas de changement
 
     $db->beginTransaction();
     try {
+        // Fin d'occupation → enregistrer la session avec sa durée
+        if ($courant['statut'] === 'OCCUPEE' && $nouveauStatut === 'LIBRE') {
+            $db->prepare("
+                INSERT INTO sessions_occupation (machine_id, debut, fin, duree_sec)
+                VALUES (?, ?, NOW(), TIMESTAMPDIFF(SECOND, ?, NOW()))
+            ")->execute([MACHINE_ID, $courant['depuis'], $courant['depuis']]);
+        }
+
         // Mettre à jour le statut courant + remettre 'depuis' à maintenant
         $db->prepare("
             UPDATE machine_status

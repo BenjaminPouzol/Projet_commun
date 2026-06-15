@@ -64,7 +64,20 @@ $stmt = $db->prepare("
 $stmt->execute([MACHINE_ID]);
 $totalSecOccupe = (int) ($stmt->fetchColumn() ?: 0);
 
-// ── Utilisations récentes (paires OCCUPEE→LIBRE) ──────────────────────────────
+// ── Taux d'occupation du jour depuis sessions_occupation ─────────────────────
+// On somme les sessions enregistrées + la session en cours si la machine est occupée
+$stmt = $db->prepare("
+    SELECT COALESCE(SUM(duree_sec), 0) AS total_sec_sessions
+    FROM sessions_occupation
+    WHERE machine_id = ? AND DATE(debut) = CURDATE()
+");
+$stmt->execute([MACHINE_ID]);
+$secSessions = (int) $stmt->fetchColumn();
+
+// Secondes écoulées depuis minuit (dénominateur du taux)
+$secsJournee = max(1, time() - strtotime('today'));
+
+// Utilisations récentes (paires OCCUPEE→LIBRE) ────────────────────────────────
 $stmt = $db->prepare("
     SELECT
         l1.timestamp                                              AS debut,
@@ -126,6 +139,10 @@ function dureeHumaine(int $sec): string
 
 $estOccupee     = $machine['statut'] === 'OCCUPEE';
 $secondes       = (int) $machine['secondes_depuis'];
+
+// Taux d'occupation = (sessions terminées + session en cours) / secondes écoulées
+$secOccupeTotal  = $secSessions + ($estOccupee ? $secondes : 0);
+$tauxOccupation  = min(100, (int) round($secOccupeTotal / $secsJournee * 100));
 $lastUpdate     = $machine['last_update']
                     ? date('H:i:s', strtotime($machine['last_update']))
                     : '—';
@@ -290,6 +307,23 @@ $lastUpdate     = $machine['last_update']
         <?= dureeHumaine($moy) ?>
       </div>
       <div class="card-sous">par session aujourd'hui</div>
+    </div>
+
+    <div class="card">
+      <div class="card-titre">Taux d'occupation du jour</div>
+      <?php
+        $couleurTaux = $tauxOccupation > 70 ? 'var(--rouge-alerte)'
+                     : ($tauxOccupation > 30 ? 'var(--terracotta)' : 'var(--sauge)');
+      ?>
+      <div class="stat-big" style="color:<?= $couleurTaux ?>">
+        <?= $tauxOccupation ?> %
+      </div>
+      <div class="card-sous"><?= dureeHumaine($secOccupeTotal) ?> sur <?= dureeHumaine($secsJournee) ?> écoulées</div>
+      <!-- Barre de progression -->
+      <div style="height:6px;background:rgba(34,48,60,.1);border-radius:99px;overflow:hidden;margin-top:.75rem">
+        <div style="height:100%;width:<?= $tauxOccupation ?>%;background:<?= $couleurTaux ?>;
+                    border-radius:99px;transition:.3s ease"></div>
+      </div>
     </div>
 
     <div class="card">

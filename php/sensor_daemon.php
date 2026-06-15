@@ -168,14 +168,22 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
     $nouveauStatut = $occupe ? 'OCCUPEE' : 'LIBRE';
     $db = getDB();
 
-    $stmt = $db->prepare('SELECT statut FROM machine_status WHERE machine_id = ?');
+    $stmt = $db->prepare('SELECT statut, depuis FROM machine_status WHERE machine_id = ?');
     $stmt->execute([$machineId]);
-    $statutActuel = $stmt->fetchColumn();
+    $courant = $stmt->fetch();
 
-    if ($statutActuel === $nouveauStatut) return;
+    if (!$courant || $courant['statut'] === $nouveauStatut) return;
 
     $db->beginTransaction();
     try {
+        // Fin d'occupation → enregistrer la session avec sa durée
+        if ($courant['statut'] === 'OCCUPEE' && $nouveauStatut === 'LIBRE') {
+            $db->prepare("
+                INSERT INTO sessions_occupation (machine_id, debut, fin, duree_sec)
+                VALUES (?, ?, NOW(), TIMESTAMPDIFF(SECOND, ?, NOW()))
+            ")->execute([$machineId, $courant['depuis'], $courant['depuis']]);
+        }
+
         $db->prepare("
             UPDATE machine_status
             SET statut = ?, valeur_brute = ?, depuis = NOW(), last_update = NOW()
