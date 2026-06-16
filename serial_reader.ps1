@@ -10,6 +10,14 @@ $SEUIL_ADC        = 200
 $DEBOUNCE_ENTREE  = 3    # lectures pour passer LIBRE -> OCCUPEE (rapide)
 $DEBOUNCE_SORTIE  = 20   # lectures pour passer OCCUPEE -> LIBRE (lent, evite faux LIBRE si trop proche)
 
+# Fichiers de supervision (lus par diagnostic.php)
+$scriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$heartbeatFile = Join-Path $scriptDir "capteur_heartbeat.txt"
+$pidFile       = Join-Path $scriptDir "capteur_pid.txt"
+
+# Ecrire le PID pour permettre l'arret depuis le site
+[System.IO.File]::WriteAllText($pidFile, [string]$PID)
+
 $port = New-Object System.IO.Ports.SerialPort $COM_PORT, $BAUD, "None", 8, "One"
 $port.ReadTimeout = 3000
 
@@ -22,11 +30,18 @@ try {
 
 Write-Host "Port $COM_PORT ouvert. Seuil ADC=$SEUIL_ADC. Approche-toi du capteur..."
 
-$compteurOccupee = 0
-$compteurLibre   = 0
-$dernierEtat     = $null
+$compteurOccupee  = 0
+$compteurLibre    = 0
+$dernierEtat      = $null
+$lastHeartbeat    = [DateTime]::MinValue
 
 while ($true) {
+    # Heartbeat toutes les 5 secondes pour indiquer que le script est vivant
+    if (([DateTime]::Now - $lastHeartbeat).TotalSeconds -ge 5) {
+        [System.IO.File]::WriteAllText($heartbeatFile, (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+        $lastHeartbeat = [DateTime]::Now
+    }
+
     try {
         $line = $port.ReadLine().Trim()
         if ($line -eq "") { continue }
@@ -65,8 +80,6 @@ while ($true) {
         }
 
         $dernierEtat = $etatFinal
-
-        $dernierEtat = $etatFinal
         $url = $API_BASE + "?etat=" + $etatFinal + "&valeur=" + $adc + "&team=" + $TEAM + "&machine=" + $MACHINE
 
         Write-Host "Appel API : $url"
@@ -78,6 +91,7 @@ while ($true) {
         }
 
     } catch [System.TimeoutException] {
+        # Timeout normal - le script tourne toujours
     } catch {
         Write-Host "Erreur lecture : $_"
         Start-Sleep -Seconds 2

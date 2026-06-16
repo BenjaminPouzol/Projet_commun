@@ -152,11 +152,14 @@ for ($h = 0; $h < 24; $h++) {
 if (($_GET['format'] ?? '') === 'json') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-cache, no-store');
+    $lastUpdateTs = $machine['last_update'] ? strtotime($machine['last_update']) : 0;
     echo json_encode([
         'statut'          => $machine['statut'],
         'valeur_brute'    => (int) $machine['valeur_brute'],
         'secondes_depuis' => (int) $machine['secondes_depuis'],
         'last_update'     => $machine['last_update'],
+        'last_update_ts'  => $lastUpdateTs,
+        'age_sec'         => $lastUpdateTs ? (time() - $lastUpdateTs) : 999,
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -276,6 +279,7 @@ $lastUpdate     = $machine['last_update']
     <li><a href="dashboard.php" class="active">Proximité G9E</a></li>
     <li><a href="dashboard_global.php">Vue globale</a></li>
     <li><a href="../public/actionneurs.php">Actionneurs</a></li>
+    <li><a href="diagnostic.php">Diagnostic</a></li>
   </ul>
   <div class="navbar-user">
     <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?></span>
@@ -294,6 +298,20 @@ $lastUpdate     = $machine['last_update']
       <?= htmlspecialchars($flashMsg['texte'], ENT_QUOTES, 'UTF-8') ?>
     </div>
   <?php endif; ?>
+
+  <!-- ── Alerte capteur inactif ───────────────────────────────────────────── -->
+  <?php
+    $ageInit = $machine['last_update'] ? (time() - strtotime($machine['last_update'])) : 999;
+  ?>
+  <div id="js-bande-capteur"
+       style="display:<?= $ageInit > 30 ? 'block' : 'none' ?>;
+              background:#78350f;color:#fde68a;padding:.75rem 1rem;border-radius:8px;
+              margin-bottom:1rem;font-size:.88rem">
+    <?php if ($ageInit > 30): ?>
+      ⚠️ Capteur inactif depuis <?= dureeHumaine($ageInit) ?>
+      — vérifiez que <code>demarrer_capteur.bat</code> est lancé.
+    <?php endif; ?>
+  </div>
 
   <!-- ── Statut principal ──────────────────────────────────────────────────── -->
   <div class="statut-hero <?= $estOccupee ? 'occupee' : 'libre' ?>" id="js-hero">
@@ -365,7 +383,12 @@ $lastUpdate     = $machine['last_update']
       <div class="stat-big" id="js-val-num" style="color:var(--ambre)">
         <?= (int) $machine['valeur_brute'] ?>
       </div>
-      <div class="card-sous">valeur brute (0–4095) · seuil <?= SEUIL ?></div>
+      <div class="card-sous">
+        valeur brute (0–4095) · seuil <?= SEUIL ?><br>
+        <span style="font-size:.74rem;color:#8a9aab">
+          Dernière réception : <span id="js-last-update"><?= $lastUpdate ?></span>
+        </span>
+      </div>
       <!-- Mini jauge -->
       <div style="height:6px;background:rgba(34,48,60,.1);border-radius:99px;overflow:hidden;margin-top:.75rem">
         <div id="js-jauge"
@@ -468,7 +491,7 @@ $lastUpdate     = $machine['last_update']
 </footer>
 
 <script>
-// ── Rafraîchissement silencieux du statut toutes les 2 s ─────────────────────
+// ── Rafraîchissement silencieux du statut toutes les secondes ────────────────
 (function () {
   function duree(sec) {
     sec = Math.max(0, sec);
@@ -481,8 +504,15 @@ $lastUpdate     = $machine['last_update']
     try {
       const r = await fetch('dashboard.php?format=json', { cache: 'no-store' });
       if (!r.ok) return;
-      const d = await r.json();
 
+      // Session expirée → la réponse est du HTML, pas du JSON
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        window.location.reload();
+        return;
+      }
+
+      const d = await r.json();
       const occupe = d.statut === 'OCCUPEE';
 
       // Hero background
@@ -512,6 +542,23 @@ $lastUpdate     = $machine['last_update']
       const jauge = document.getElementById('js-jauge');
       jauge.style.width  = pct + '%';
       jauge.style.background = occupe ? 'var(--rouge-alerte)' : 'var(--vert-ok)';
+
+      // Indicateur dernière mise à jour + alerte si capteur déconnecté
+      const bandeElem = document.getElementById('js-bande-capteur');
+      const age = typeof d.age_sec === 'number' ? d.age_sec : 999;
+      if (age > 30) {
+        bandeElem.style.display = 'block';
+        bandeElem.innerHTML = '⚠️ Capteur inactif depuis ' + duree(age) +
+          ' — vérifiez que <code>demarrer_capteur.bat</code> est lancé.';
+      } else {
+        bandeElem.style.display = 'none';
+      }
+
+      // Heure dernière réception
+      const tsElem = document.getElementById('js-last-update');
+      if (tsElem && d.last_update) {
+        tsElem.textContent = d.last_update.substring(11, 19); // HH:MM:SS
+      }
 
     } catch (_) {}
   }
