@@ -1,30 +1,25 @@
 <?php
-// Connexion PDO – crée la base et les tables automatiquement au premier accès
+// Connexion BDD — directe (PDO) ou via relai HTTP selon l'environnement
 
-define('DB_HOST',   'localhost');
-define('DB_NAME',   'iot_machine');
-define('DB_USER',   'root');
-define('DB_PASS',   '');
+define('DB_HOST',   '172.20.0.5');
+define('DB_NAME',   'salledesportintelligente_G9');
+define('DB_USER',   'salledesportintelligente_G9');
+define('DB_PASS',   'iYU_M.Awgn!mhKW5');
 define('MACHINE_ID', 1);
 define('SEUIL',      500);   // Valeur ADC : >= SEUIL → machine OCCUPÉE
 
-function getDB(): PDO
+// ── Relai HTTP ────────────────────────────────────────────────────────────────
+// Renseigner RELAY_URL avec l'URL du relay.php déployé sur le serveur de l'école
+// quand la connexion directe à DB_HOST n'est pas possible (réseau extérieur).
+// Laisser vide '' pour toujours utiliser la connexion directe.
+define('RELAY_URL',    '');   // ex: 'https://dash.novhs.fr/dev/G9E/relay.php'
+define('RELAY_SECRET', 'G9E_relay_s3cr3t_2026');
+
+// ── Schéma BDD (partagé entre mode direct et mode relai) ─────────────────────
+function schemaStatements(): array
 {
-    static $pdo = null;
-    if ($pdo !== null) return $pdo;
-
-    $boot = new PDO(
-        'mysql:host=' . DB_HOST . ';charset=utf8mb4',
-        DB_USER, DB_PASS,
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
-    );
-    $boot->exec("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "`
-                 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    $boot->exec("USE `" . DB_NAME . "`");
-
-    // ── Utilisateurs ─────────────────────────────────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS utilisateurs (
+    return [
+        "CREATE TABLE IF NOT EXISTS utilisateurs (
             id           INT          NOT NULL AUTO_INCREMENT,
             nom          VARCHAR(80)  NOT NULL,
             email        VARCHAR(120) NOT NULL,
@@ -33,116 +28,95 @@ function getDB(): PDO
             cree_le      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY uk_email (email)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Statut actuel de la machine ───────────────────────────────────────────
-    // 'depuis' = quand le statut actuel a commencé
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS machine_status (
-            machine_id   INT                    NOT NULL,
+        "CREATE TABLE IF NOT EXISTS machine_status (
+            machine_id   INT                     NOT NULL,
             statut       ENUM('LIBRE','OCCUPEE') NOT NULL DEFAULT 'LIBRE',
-            valeur_brute INT                    NOT NULL DEFAULT 0,
-            depuis       TIMESTAMP              NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_update  TIMESTAMP              NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                               ON UPDATE CURRENT_TIMESTAMP,
-            team_id      VARCHAR(20)            NOT NULL DEFAULT 'G9E',
+            valeur_brute INT                     NOT NULL DEFAULT 0,
+            depuis       TIMESTAMP               NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_update  TIMESTAMP               NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                ON UPDATE CURRENT_TIMESTAMP,
+            team_id      VARCHAR(20)             NOT NULL DEFAULT 'G9E',
             PRIMARY KEY (machine_id)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Historique des changements de statut ──────────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS machine_log (
-            id           BIGINT                 NOT NULL AUTO_INCREMENT,
-            machine_id   INT                    NOT NULL,
+        "CREATE TABLE IF NOT EXISTS machine_log (
+            id           BIGINT                  NOT NULL AUTO_INCREMENT,
+            machine_id   INT                     NOT NULL,
             statut       ENUM('LIBRE','OCCUPEE') NOT NULL,
-            valeur_brute INT                    NOT NULL DEFAULT 0,
-            timestamp    TIMESTAMP              NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            valeur_brute INT                     NOT NULL DEFAULT 0,
+            timestamp    TIMESTAMP               NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             INDEX idx_machine_time (machine_id, timestamp)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Sessions d'occupation complètes (durée pré-calculée) ──────────────────
-    // Une ligne par occupation terminée (transition OCCUPEE → LIBRE)
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS sessions_occupation (
-            id          BIGINT    NOT NULL AUTO_INCREMENT,
-            machine_id  INT       NOT NULL,
-            debut       TIMESTAMP NOT NULL,
-            fin         TIMESTAMP NOT NULL,
-            duree_sec   INT       NOT NULL,
+        "CREATE TABLE IF NOT EXISTS sessions_occupation (
+            id         BIGINT    NOT NULL AUTO_INCREMENT,
+            machine_id INT       NOT NULL,
+            debut      TIMESTAMP NOT NULL,
+            fin        TIMESTAMP NOT NULL,
+            duree_sec  INT       NOT NULL,
             PRIMARY KEY (id),
             INDEX idx_machine_debut (machine_id, debut)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // Ligne initiale : machine LIBRE
-    $boot->exec("INSERT IGNORE INTO machine_status (machine_id, statut, team_id)
-                 VALUES (1, 'LIBRE', 'G9E')");
-
-    // ── Lectures historiques multi-capteurs ────────────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS sensor_readings (
-            id          BIGINT        NOT NULL AUTO_INCREMENT,
-            sensor_type VARCHAR(30)   NOT NULL,
-            machine_id  INT           NOT NULL DEFAULT 1,
-            team_id     VARCHAR(20)   NOT NULL DEFAULT '',
-            valeur      FLOAT         NOT NULL,
-            unite       VARCHAR(20)   NOT NULL DEFAULT '',
-            timestamp   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "CREATE TABLE IF NOT EXISTS sensor_readings (
+            id          BIGINT      NOT NULL AUTO_INCREMENT,
+            sensor_type VARCHAR(30) NOT NULL,
+            machine_id  INT         NOT NULL DEFAULT 1,
+            team_id     VARCHAR(20) NOT NULL DEFAULT '',
+            valeur      FLOAT       NOT NULL,
+            unite       VARCHAR(20) NOT NULL DEFAULT '',
+            timestamp   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             INDEX idx_type_time    (sensor_type, timestamp),
             INDEX idx_machine_time (machine_id,  timestamp)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Valeur courante par capteur ────────────────────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS sensor_current (
-            sensor_type VARCHAR(30)   NOT NULL,
-            machine_id  INT           NOT NULL DEFAULT 1,
-            team_id     VARCHAR(20)   NOT NULL DEFAULT '',
-            valeur      FLOAT         NOT NULL,
-            unite       VARCHAR(20)   NOT NULL DEFAULT '',
-            last_update TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                     ON UPDATE CURRENT_TIMESTAMP,
+        "CREATE TABLE IF NOT EXISTS sensor_current (
+            sensor_type VARCHAR(30) NOT NULL,
+            machine_id  INT         NOT NULL DEFAULT 1,
+            team_id     VARCHAR(20) NOT NULL DEFAULT '',
+            valeur      FLOAT       NOT NULL,
+            unite       VARCHAR(20) NOT NULL DEFAULT '',
+            last_update TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                   ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (sensor_type, machine_id)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Actionneurs (LED, OLED, buzzer, moteur) ───────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS actionneurs (
-            id      INT          NOT NULL AUTO_INCREMENT,
-            nom     VARCHAR(80)  NOT NULL,
-            type    VARCHAR(20)  NOT NULL,
-            groupe  VARCHAR(20)  NOT NULL DEFAULT '',
-            equipe  VARCHAR(40)  NOT NULL DEFAULT '',
-            etat    VARCHAR(80)  NOT NULL DEFAULT 'off',
+        "CREATE TABLE IF NOT EXISTS actionneurs (
+            id     INT         NOT NULL AUTO_INCREMENT,
+            nom    VARCHAR(80) NOT NULL,
+            type   VARCHAR(20) NOT NULL,
+            groupe VARCHAR(20) NOT NULL DEFAULT '',
+            equipe VARCHAR(40) NOT NULL DEFAULT '',
+            etat   VARCHAR(80) NOT NULL DEFAULT 'off',
             PRIMARY KEY (id)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Historique des commandes envoyées aux actionneurs ──────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS commandes_actionneurs (
-            id             INT          NOT NULL AUTO_INCREMENT,
-            actionneur_id  INT          NOT NULL,
-            commande       VARCHAR(120) NOT NULL,
-            envoye         TINYINT(1)   NOT NULL DEFAULT 0,
-            horodatage     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "CREATE TABLE IF NOT EXISTS commandes_actionneurs (
+            id            INT          NOT NULL AUTO_INCREMENT,
+            actionneur_id INT          NOT NULL,
+            commande      VARCHAR(120) NOT NULL,
+            envoye        TINYINT(1)   NOT NULL DEFAULT 0,
+            horodatage    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             INDEX idx_actionneur (actionneur_id),
             INDEX idx_horodatage (horodatage),
             FOREIGN KEY (actionneur_id) REFERENCES actionneurs(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
 
-    // ── Alertes capteurs ───────────────────────────────────────────────────────
-    $boot->exec("
-        CREATE TABLE IF NOT EXISTS sensor_alerts (
+        "CREATE TABLE IF NOT EXISTS `G9E_Proximité` (
+            id         BIGINT                  NOT NULL AUTO_INCREMENT,
+            valeur     INT                     NOT NULL,
+            statut     ENUM('LIBRE','OCCUPEE') NOT NULL,
+            horodatage TIMESTAMP               NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            INDEX idx_horodatage (horodatage)
+        ) ENGINE=InnoDB",
+
+        "CREATE TABLE IF NOT EXISTS sensor_alerts (
             id          BIGINT            NOT NULL AUTO_INCREMENT,
             sensor_type VARCHAR(30)       NOT NULL,
             machine_id  INT               NOT NULL DEFAULT 1,
@@ -155,9 +129,28 @@ function getDB(): PDO
             PRIMARY KEY (id),
             INDEX idx_time    (timestamp),
             INDEX idx_actives (acquittee, timestamp)
-        ) ENGINE=InnoDB
-    ");
+        ) ENGINE=InnoDB",
+    ];
+}
 
+// ── Connexion (PDO directe ou RelayClient HTTP) ───────────────────────────────
+function getDB(): PDO|RelayClient
+{
+    static $pdo = null;
+    if ($pdo !== null) return $pdo;
+
+    // ── Mode relai HTTP ───────────────────────────────────────────────────────
+    if (RELAY_URL !== '') {
+        require_once __DIR__ . '/RelayClient.php';
+        $relay = new RelayClient(RELAY_URL, RELAY_SECRET);
+        $relay->initSchema(schemaStatements());
+        $relay->exec("INSERT IGNORE INTO machine_status (machine_id, statut, team_id)
+                      VALUES (1, 'LIBRE', 'G9E')");
+        $pdo = $relay;
+        return $pdo;
+    }
+
+    // ── Connexion PDO directe ─────────────────────────────────────────────────
     $pdo = new PDO(
         'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
         DB_USER, DB_PASS,
@@ -166,5 +159,12 @@ function getDB(): PDO
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]
     );
+
+    foreach (schemaStatements() as $sql) {
+        $pdo->exec($sql);
+    }
+    $pdo->exec("INSERT IGNORE INTO machine_status (machine_id, statut, team_id)
+                VALUES (1, 'LIBRE', 'G9E')");
+
     return $pdo;
 }

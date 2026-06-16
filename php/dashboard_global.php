@@ -73,6 +73,26 @@ $historique = $db->prepare("
 $historique->execute([MACHINE_ID]);
 $derniersLog = $historique->fetchAll();
 
+// ── Statut des équipes ────────────────────────────────────────────────────────
+$equipesMeta = [
+    'G9A' => ['capteurs' => ['SON'],                   'desc' => 'Son'],
+    'G9B' => ['capteurs' => ['TEMPERATURE', 'HUMIDITE'], 'desc' => 'Temp. & Humidité'],
+    'G9C' => ['capteurs' => ['LUX'],                   'desc' => 'Luminosité'],
+    'G9D' => ['capteurs' => ['CO2'],                   'desc' => 'CO₂'],
+    'G9E' => ['capteurs' => ['PROXIMITE'],             'desc' => 'Proximité (nous)'],
+];
+
+$stmtEq = $db->query("
+    SELECT team_id, MAX(last_update) AS last_seen
+    FROM sensor_current
+    WHERE team_id != ''
+    GROUP BY team_id
+");
+$equipesStatus = [];
+foreach ($stmtEq->fetchAll() as $row) {
+    $equipesStatus[$row['team_id']] = $row['last_seen'];
+}
+
 // ── Sparklines : 20 dernières lectures par capteur (pour mini-graphes) ────────
 $spark = [];
 foreach (['TEMPERATURE', 'HUMIDITE', 'CO2', 'LUX', 'SON'] as $t) {
@@ -250,6 +270,31 @@ $nbAlertes  = count($alertesActives);
       font-size: .9rem;
     }
 
+    /* ── Panneau équipes ───────────────────────────────────────── */
+    .grid-equipes {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: .75rem;
+      margin-top: .75rem;
+    }
+    .equipe-card {
+      background: var(--fond-page, #f8f5f0);
+      border-radius: var(--radius);
+      padding: .85rem 1rem;
+      border: 1px solid #e8e3db;
+      transition: border-color .2s;
+    }
+    .equipe-card.en-ligne { border-color: var(--vert-ok,  #5e8c6a); }
+    .equipe-card.inactif  { border-color: var(--ambre,    #E8A33D); }
+    .equipe-entete {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: .35rem;
+    }
+    .equipe-nom  { font-weight: 800; font-size: .95rem; color: var(--bleu-nuit); }
+    .equipe-desc { font-size: .7rem; color: #8a9aab; margin-bottom: .4rem; }
+    .equipe-capteurs { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .35rem; }
+    .equipe-last { font-size: .65rem; color: #aab; }
+
     /* ── Indicateur voyant ─────────────────────────────────────── */
     .voyant { display:inline-block; width:12px; height:12px; border-radius:50%; }
     .voyant.libre   { background:#4ade80; box-shadow:0 0 0 3px rgba(74,222,128,.3); }
@@ -303,6 +348,46 @@ $nbAlertes  = count($alertesActives);
     <a href="#section-alertes" style="color:var(--rouge-alerte);font-weight:700">Voir ci-dessous</a>
   </div>
   <?php endif; ?>
+
+  <!-- ── Statut des équipes ───────────────────────────────────────────────── -->
+  <div class="card mb-3">
+    <div class="section-titre">
+      <h2 style="font-size:1rem">Statut des équipes</h2>
+      <a href="api_ingest.php" target="_blank" rel="noopener" class="btn btn-secondaire btn-sm">
+        API d'ingestion ↗
+      </a>
+    </div>
+    <p style="font-size:.78rem;color:#8a9aab;margin:0 0 .6rem">
+      Chaque équipe envoie ses données via
+      <code style="font-size:.75rem;background:#f0ede8;padding:.1rem .35rem;border-radius:4px">POST /php/api_ingest.php</code>
+      — statut mis à jour toutes les 30 s.
+    </p>
+    <div class="grid-equipes" id="js-grid-equipes">
+      <?php foreach ($equipesMeta as $tid => $meta):
+          $lastSeen  = $equipesStatus[$tid] ?? null;
+          $age       = $lastSeen ? time() - strtotime($lastSeen) : PHP_INT_MAX;
+          if ($age < 120)       { $statutEq = 'EN LIGNE';   $badgeEq = 'badge-ok';    $cardEq = 'en-ligne'; }
+          elseif ($age < 600)   { $statutEq = 'INACTIF';    $badgeEq = 'badge-ambre'; $cardEq = 'inactif';  }
+          else                  { $statutEq = 'HORS LIGNE'; $badgeEq = 'badge-info';  $cardEq = '';         }
+      ?>
+      <div class="equipe-card <?= $cardEq ?>" id="js-equipe-<?= $tid ?>">
+        <div class="equipe-entete">
+          <span class="equipe-nom"><?= $tid ?></span>
+          <span class="badge <?= $badgeEq ?>" id="js-equipe-badge-<?= $tid ?>"><?= $statutEq ?></span>
+        </div>
+        <div class="equipe-desc"><?= $meta['desc'] ?></div>
+        <div class="equipe-capteurs">
+          <?php foreach ($meta['capteurs'] as $c): ?>
+            <span class="badge badge-info" style="font-size:.62rem"><?= $c ?></span>
+          <?php endforeach; ?>
+        </div>
+        <div class="equipe-last" id="js-equipe-last-<?= $tid ?>">
+          <?= $lastSeen ? 'Dernière donnée : ' . date('H:i:s', strtotime($lastSeen)) : 'Aucune donnée reçue' ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
 
   <!-- ── Grille capteurs ───────────────────────────────────────────────────── -->
   <div class="grid-capteurs" id="js-grid">
@@ -585,6 +670,48 @@ $nbAlertes  = count($alertesActives);
   }
 
   setInterval(refresh, 5000);
+})();
+
+// ── Rafraîchissement statut équipes toutes les 30 s ───────────────────────────
+(function () {
+  function el(id) { return document.getElementById(id); }
+
+  function dureeDepuis(lastSeen) {
+    if (!lastSeen) return 'Aucune donnée reçue';
+    const d = new Date(lastSeen);
+    return 'Dernière donnée : ' + d.toLocaleTimeString('fr-FR');
+  }
+
+  function statutEquipe(ageSec) {
+    if (ageSec < 120)  return { txt: 'EN LIGNE',   cls: 'badge-ok',    card: 'en-ligne' };
+    if (ageSec < 600)  return { txt: 'INACTIF',    cls: 'badge-ambre', card: 'inactif'  };
+    return               { txt: 'HORS LIGNE', cls: 'badge-info', card: ''         };
+  }
+
+  async function refreshEquipes() {
+    try {
+      const r = await fetch('api_ingest.php?action=status', { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+
+      (d.equipes || []).forEach(eq => {
+        const tid   = eq.team_id;
+        const badge = el('js-equipe-badge-' + tid);
+        const last  = el('js-equipe-last-'  + tid);
+        const card  = el('js-equipe-'       + tid);
+        const s     = statutEquipe(eq.age_sec ?? 9999);
+
+        if (badge) { badge.textContent = s.txt; badge.className = 'badge ' + s.cls; }
+        if (last)  { last.textContent  = dureeDepuis(eq.last_seen); }
+        if (card)  {
+          card.classList.remove('en-ligne', 'inactif');
+          if (s.card) card.classList.add(s.card);
+        }
+      });
+    } catch (_) {}
+  }
+
+  setInterval(refreshEquipes, 30000);
 })();
 </script>
 </body>

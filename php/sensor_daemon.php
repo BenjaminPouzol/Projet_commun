@@ -168,6 +168,11 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
     $nouveauStatut = $occupe ? 'OCCUPEE' : 'LIBRE';
     $db = getDB();
 
+    // ── Table partagée G9E_Proximité (BDD commune) ────────────────────────────
+    $db->prepare("
+        INSERT INTO `G9E_Proximité` (valeur, statut) VALUES (?, ?)
+    ")->execute([$valeur, $nouveauStatut]);
+
     $stmt = $db->prepare('SELECT statut, depuis FROM machine_status WHERE machine_id = ?');
     $stmt->execute([$machineId]);
     $courant = $stmt->fetch();
