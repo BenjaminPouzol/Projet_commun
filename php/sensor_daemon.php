@@ -62,17 +62,25 @@ $derniereEcr    = [];   // [type => int]      timestamps dernières écritures
 $derniereAlerte = [];   // [type+dir => int]  timestamps dernières alertes créées
 $bufferProx     = [];   // bool[]             fenêtre anti-rebond proximité
 
-// ── Ouverture du port série ───────────────────────────────────────────────────
+// ── Ouverture du port série (fopen natif Windows, sans php_dio) ──────────────
 function ouvrirPort(string $port): mixed
 {
-    $chemin = (PHP_OS_FAMILY === 'Windows') ? '\\\\.\\'  . $port : $port;
-    $fd     = @dio_open($chemin, O_RDONLY | O_NOCTTY);
+    if (PHP_OS_FAMILY === 'Windows') {
+        shell_exec("mode {$port}: BAUD=" . BAUD_RATE . " PARITY=N DATA=8 STOP=1 XON=OFF 2>NUL");
+        $chemin = "\\\\.\\" . $port;
+    } else {
+        $chemin = $port;
+    }
+
+    $fd = @fopen($chemin, 'r+b');
     if ($fd === false) {
         throw new RuntimeException(
-            "Impossible d'ouvrir $port — vérifiez le câble USB et que php_dio est activé dans php.ini"
+            "Impossible d'ouvrir $port — vérifiez que le câble USB est branché (Gestionnaire de périphériques)"
         );
     }
-    dio_tcsetattr($fd, ['baud' => BAUD_RATE, 'bits' => 8, 'stop' => 1, 'parity' => 0]);
+    // Mode bloquant avec timeout 5 s — fread attend qu'un octet arrive
+    stream_set_blocking($fd, true);
+    stream_set_timeout($fd, 5);
     return $fd;
 }
 
@@ -150,23 +158,14 @@ function verifierAlertes(string $type, float $valeur, int $machineId): void
     }
 }
 
-// ── Gestion de la proximité (compatible avec machine_status / machine_log) ───
-function traiterProximite(int $valeur, int $machineId, string $teamId): void
+// ── Mise à jour BDD proximité (logique commune) ───────────────────────────────
+function appliquerEtatProximite(bool $occupe, int $valeur, int $machineId, string $teamId): void
 {
     global $bufferProx;
-
-    // Zone ambiguë : valeur entre SEUIL_BAS et SEUIL = capteur trop proche.
-    // On ignore la lecture pour ne pas basculer vers LIBRE par erreur.
-    if ($valeur >= SEUIL_BAS && $valeur < SEUIL) {
-        return;
-    }
-
-    $occupe = ($valeur >= SEUIL);
 
     $bufferProx[] = $occupe;
     if (count($bufferProx) > DEBOUNCE_PROX) array_shift($bufferProx);
 
-    // Agir seulement si toutes les lectures du buffer sont identiques
     if (count($bufferProx) < DEBOUNCE_PROX || count(array_unique($bufferProx)) !== 1) {
         return;
     }
@@ -182,7 +181,6 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
 
     $db->beginTransaction();
     try {
-        // Fin d'occupation → enregistrer la session avec sa durée
         if ($courant['statut'] === 'OCCUPEE' && $nouveauStatut === 'LIBRE') {
             $db->prepare("
                 INSERT INTO sessions_occupation (machine_id, debut, fin, duree_sec)
@@ -206,7 +204,6 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
         throw $e;
     }
 
-    // Aussi dans sensor_current / sensor_readings
     $db->prepare("
         INSERT INTO sensor_current (sensor_type, machine_id, team_id, valeur, unite)
         VALUES ('PROXIMITE', ?, ?, ?, 'ADC')
@@ -220,6 +217,21 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
 
     $icone = $occupe ? '🔴 OCCUPÉE' : '🟢 LIBRE  ';
     printf("[%s] %s  (capteur : %d)\n", date('H:i:s'), $icone, $valeur);
+}
+
+// ── Format ancien : PROXIMITE:XXXX (seuil calculé ici) ───────────────────────
+function traiterProximite(int $valeur, int $machineId, string $teamId): void
+{
+    // Zone ambiguë : valeur entre SEUIL_BAS et SEUIL = capteur trop proche.
+    if ($valeur >= SEUIL_BAS && $valeur < SEUIL) return;
+
+    appliquerEtatProximite($valeur >= SEUIL, $valeur, $machineId, $teamId);
+}
+
+// ── Format Tiva : ADC:xx;DIST:yy;ETAT:LIBRE|OCCUPEE (état déjà calculé) ──────
+function traiterTivaProximite(int $adc, int $dist, string $etat, int $machineId, string $teamId): void
+{
+    appliquerEtatProximite($etat === 'OCCUPEE', $adc, $machineId, $teamId);
 }
 
 // ── Traitement d'une trame reçue ──────────────────────────────────────────────
@@ -238,7 +250,19 @@ function traiterTrame(string $trame, int $machineId, string $teamId): void
         return;
     }
 
-    // Proximité (met aussi à jour machine_status pour rétro-compatibilité)
+    // Format Tiva G9E : "ADC:24;DIST:80;ETAT:LIBRE"
+    if (preg_match('/^ADC:(\d+);DIST:(\d+);ETAT:(LIBRE|OCCUPEE)$/', $trame, $m)) {
+        traiterTivaProximite((int)$m[1], (int)$m[2], $m[3], $machineId, $teamId);
+        return;
+    }
+
+    // Format secondaire Tiva : "PROXIMITE,1,LIBRE,80"
+    if (preg_match('/^PROXIMITE,\d+,(LIBRE|OCCUPEE),(\d+)$/', $trame, $m)) {
+        appliquerEtatProximite($m[1] === 'OCCUPEE', (int)$m[2], $machineId, $teamId);
+        return;
+    }
+
+    // Format original : "PROXIMITE:XXXX" (autres équipes / ancien firmware)
     if (preg_match('/^PROXIMITE:(\d+)$/', $trame, $m)) {
         traiterProximite((int)$m[1], $machineId, $teamId);
         return;
@@ -258,8 +282,8 @@ while (true) {
         echo "Port $COM_PORT_ARG ouvert. En attente de données...\n";
 
         while (true) {
-            $octet = @dio_read($port, 1);
-            if ($octet === false || $octet === '') { usleep(10_000); continue; }
+            $octet = @fread($port, 1);
+            if ($octet === false || $octet === '') { continue; }
 
             if ($octet === "\n") {
                 $trame = trim($ligne);
@@ -278,7 +302,7 @@ while (true) {
             }
         }
 
-        dio_close($port);
+        fclose($port);
 
     } catch (Throwable $e) {
         echo '[ERREUR] ' . $e->getMessage() . "\nReconnexion dans 5 s...\n\n";

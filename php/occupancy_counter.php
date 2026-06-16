@@ -23,15 +23,22 @@ const DEBOUNCE  = 5;     // Lectures consécutives requises avant changement
 
 function ouvrirPort(): mixed
 {
-    $chemin = (PHP_OS_FAMILY === 'Windows') ? '\\\\.\\'  . COM_PORT : COM_PORT;
-    $port   = @dio_open($chemin, O_RDONLY | O_NOCTTY);
+    if (PHP_OS_FAMILY === 'Windows') {
+        shell_exec('mode ' . COM_PORT . ': BAUD=' . BAUD_RATE . ' PARITY=N DATA=8 STOP=1 XON=OFF 2>NUL');
+        $chemin = '\\\\.\\'  . COM_PORT;
+    } else {
+        $chemin = COM_PORT;
+    }
+
+    $port = @fopen($chemin, 'r+b');
     if ($port === false) {
         throw new RuntimeException(
             "Impossible d'ouvrir " . COM_PORT .
-            " — vérifiez le câble USB et que php_dio est activé dans php.ini"
+            " — vérifiez que le câble USB est branché (Gestionnaire de périphériques)"
         );
     }
-    dio_tcsetattr($port, ['baud' => BAUD_RATE, 'bits' => 8, 'stop' => 1, 'parity' => 0]);
+    stream_set_blocking($port, true);
+    stream_set_timeout($port, 5);
     return $port;
 }
 
@@ -97,8 +104,8 @@ while (true) {
         echo "Port " . COM_PORT . " ouvert. Surveillance en cours...\n";
 
         while (true) {
-            $octet = @dio_read($port, 1);
-            if ($octet === false || $octet === '') { usleep(10_000); continue; }
+            $octet = @fread($port, 1);
+            if ($octet === false || $octet === '') { continue; }
 
             if ($octet === "\n") {
                 $trame = trim($ligne);
@@ -132,7 +139,7 @@ while (true) {
             }
         }
 
-        dio_close($port);
+        fclose($port);
 
     } catch (Throwable $e) {
         echo '[ERREUR] ' . $e->getMessage() . "\nReconnexion dans 5 s...\n\n";

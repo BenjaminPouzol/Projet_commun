@@ -71,8 +71,8 @@ function getDB(): PDO
         CREATE TABLE IF NOT EXISTS sessions_occupation (
             id          BIGINT    NOT NULL AUTO_INCREMENT,
             machine_id  INT       NOT NULL,
-            debut       TIMESTAMP NOT NULL,
-            fin         TIMESTAMP NOT NULL,
+            debut       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            fin         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             duree_sec   INT       NOT NULL,
             PRIMARY KEY (id),
             INDEX idx_machine_debut (machine_id, debut)

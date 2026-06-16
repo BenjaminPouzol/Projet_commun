@@ -100,19 +100,53 @@ $stmt = $db->prepare("
 $stmt->execute([MACHINE_ID]);
 $utilisations = $stmt->fetchAll();
 
-// ── Taux d'occupation par heure (historique) ──────────────────────────────────
-// Pour chaque heure, combien de fois la machine était OCCUPÉE vs LIBRE
+// ── Taux d'occupation réel par heure ─────────────────────────────────────────
+// Calcul basé sur les durées de sessions_occupation (overlap session / heure)
+$estOccupeeNow = $machine['statut'] === 'OCCUPEE';
+$secondesNow   = (int) $machine['secondes_depuis'];
+
 $stmt = $db->prepare("
-    SELECT HOUR(timestamp) AS heure,
-           COUNT(CASE WHEN statut = 'OCCUPEE' THEN 1 END) AS nb_occ,
-           COUNT(*) AS nb_total
-    FROM machine_log
-    WHERE machine_id = ?
-    GROUP BY HOUR(timestamp)
-    ORDER BY heure
+    SELECT debut, fin, duree_sec
+    FROM sessions_occupation
+    WHERE machine_id = ? AND DATE(debut) = CURDATE()
 ");
 $stmt->execute([MACHINE_ID]);
-$tauxHoraires = $stmt->fetchAll();
+$sessionsJour = $stmt->fetchAll();
+
+// Ajouter la session en cours si machine occupée maintenant
+if ($estOccupeeNow) {
+    $sessionsJour[] = ['debut' => $machine['last_update'], 'fin' => null];
+}
+
+$now   = time();
+$today = strtotime('today');
+
+$tauxHoraires = [];
+for ($h = 0; $h < 24; $h++) {
+    $hDebut = $today + $h * 3600;
+    $hFin   = $hDebut + 3600;
+
+    if ($hDebut >= $now) {
+        $tauxHoraires[$h] = ['taux' => null, 'sec_occ' => 0];
+        continue;
+    }
+
+    $dureeHeure = min($hFin, $now) - $hDebut;
+    $secOcc = 0;
+
+    foreach ($sessionsJour as $s) {
+        $debut = strtotime($s['debut']);
+        $fin   = $s['fin'] ? strtotime($s['fin']) : $now;
+        $debut = max($debut, $hDebut);
+        $fin   = min($fin,   $hFin);
+        if ($fin > $debut) $secOcc += $fin - $debut;
+    }
+
+    $tauxHoraires[$h] = [
+        'taux'    => min(100, (int) round($secOcc / $dureeHeure * 100)),
+        'sec_occ' => $secOcc,
+    ];
+}
 
 // ── Endpoint JSON pour mise à jour silencieuse ────────────────────────────────
 if (($_GET['format'] ?? '') === 'json') {
@@ -137,8 +171,8 @@ function dureeHumaine(int $sec): string
     return "{$h} h {$m} min";
 }
 
-$estOccupee     = $machine['statut'] === 'OCCUPEE';
-$secondes       = (int) $machine['secondes_depuis'];
+$estOccupee = $estOccupeeNow;
+$secondes   = $secondesNow;
 
 // Taux d'occupation = (sessions terminées + session en cours) / secondes écoulées
 $secOccupeTotal  = $secSessions + ($estOccupee ? $secondes : 0);
@@ -344,31 +378,29 @@ $lastUpdate     = $machine['last_update']
   </div>
 
   <!-- ── Taux d'utilisation par heure ──────────────────────────────────────── -->
-  <?php if (!empty($tauxHoraires)): ?>
   <div class="chart-wrapper mb-3">
     <div class="section-titre">
       <h2>Taux d'utilisation par heure</h2>
     </div>
-    <?php
-      $parHeure = array_fill(0, 24, ['nb_occ' => 0, 'nb_total' => 0]);
-      foreach ($tauxHoraires as $h) {
-          $parHeure[(int)$h['heure']] = $h;
-      }
-    ?>
     <div class="heure-grid">
       <?php for ($i = 0; $i < 24; $i++):
-        $d    = $parHeure[$i];
-        $taux = $d['nb_total'] > 0 ? round($d['nb_occ'] / $d['nb_total'] * 100) : 0;
-        $h    = max(2, round($taux / 100 * 70));
+        $d    = $tauxHoraires[$i];
+        $taux = $d['taux'];          // null = heure future
+        $barH = ($taux !== null && $taux > 0) ? max(2, (int) round($taux / 100 * 70)) : 0;
+        $secOccH = $d['sec_occ'] ?? 0;
+        $tooltip = $taux !== null
+            ? "{$i}h : {$taux}% (" . dureeHumaine($secOccH) . " occupée)"
+            : "{$i}h : —";
       ?>
-        <div class="heure-col"
-             title="<?= $i ?>h : <?= $taux ?>% occupée (<?= (int)$d['nb_occ'] ?>/<?= (int)$d['nb_total'] ?> lectures)">
+        <div class="heure-col" title="<?= $tooltip ?>">
           <div class="heure-bar-wrap">
-            <div class="heure-bar" style="height:<?= $taux > 0 ? $h : 0 ?>px;
+            <?php if ($taux !== null && $taux > 0): ?>
+            <div class="heure-bar" style="height:<?= $barH ?>px;
                  background:<?= $taux > 70 ? 'var(--rouge-alerte)' : ($taux > 30 ? 'var(--terracotta)' : 'var(--sauge)') ?>">
             </div>
+            <?php endif; ?>
           </div>
-          <div class="heure-val"><?= $taux > 0 ? $taux . '%' : '—' ?></div>
+          <div class="heure-val"><?= $taux !== null && $taux > 0 ? $taux . '%' : '—' ?></div>
           <div class="heure-lbl"><?= $i ?>h</div>
         </div>
       <?php endfor; ?>
@@ -379,7 +411,6 @@ $lastUpdate     = $machine['last_update']
       <span><span style="display:inline-block;width:10px;height:10px;background:var(--rouge-alerte);border-radius:2px;margin-right:.3rem"></span>Très sollicitée (> 70 %)</span>
     </div>
   </div>
-  <?php endif; ?>
 
   <!-- ── Dernières utilisations ─────────────────────────────────────────────── -->
   <?php if (!empty($utilisations)): ?>
@@ -485,7 +516,7 @@ $lastUpdate     = $machine['last_update']
     } catch (_) {}
   }
 
-  setInterval(refresh, 2000);
+  setInterval(refresh, 1000);
 })();
 </script>
 
