@@ -1,5 +1,5 @@
 <?php
-// Connexion BDD — directe (PDO) ou via relai HTTP selon l'environnement
+// Connexion BDD partagée ISEP
 
 define('DB_HOST',   '172.20.0.5');
 define('DB_NAME',   'salledesportintelligente_G9');
@@ -7,13 +7,6 @@ define('DB_USER',   'salledesportintelligente_G9');
 define('DB_PASS',   'iYU_M.Awgn!mhKW5');
 define('MACHINE_ID', 1);
 define('SEUIL',      500);   // Valeur ADC : >= SEUIL → machine OCCUPÉE
-
-// ── Relai HTTP ────────────────────────────────────────────────────────────────
-// Renseigner RELAY_URL avec l'URL du relay.php déployé sur le serveur de l'école
-// quand la connexion directe à DB_HOST n'est pas possible (réseau extérieur).
-// Laisser vide '' pour toujours utiliser la connexion directe.
-define('RELAY_URL',    '');   // ex: 'https://dash.novhs.fr/dev/G9E/relay.php'
-define('RELAY_SECRET', 'G9E_relay_s3cr3t_2026');
 
 // ── Schéma BDD (partagé entre mode direct et mode relai) ─────────────────────
 function schemaStatements(): array
@@ -133,24 +126,12 @@ function schemaStatements(): array
     ];
 }
 
-// ── Connexion (PDO directe ou RelayClient HTTP) ───────────────────────────────
-function getDB(): PDO|RelayClient
+// ── Connexion PDO ─────────────────────────────────────────────────────────────
+function getDB(): PDO
 {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
 
-    // ── Mode relai HTTP ───────────────────────────────────────────────────────
-    if (RELAY_URL !== '') {
-        require_once __DIR__ . '/RelayClient.php';
-        $relay = new RelayClient(RELAY_URL, RELAY_SECRET);
-        $relay->initSchema(schemaStatements());
-        $relay->exec("INSERT IGNORE INTO machine_status (machine_id, statut, team_id)
-                      VALUES (1, 'LIBRE', 'G9E')");
-        $pdo = $relay;
-        return $pdo;
-    }
-
-    // ── Connexion PDO directe ─────────────────────────────────────────────────
     $pdo = new PDO(
         'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
         DB_USER, DB_PASS,
