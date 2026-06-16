@@ -7,6 +7,7 @@ define('DB_USER',   'root');
 define('DB_PASS',   '');
 define('MACHINE_ID', 1);
 define('SEUIL',      500);   // Valeur ADC : >= SEUIL → machine OCCUPÉE
+define('SEUIL_BAS',  100);   // < SEUIL_BAS → vraiment libre ; entre les deux = trop proche, état maintenu
 
 function getDB(): PDO
 {

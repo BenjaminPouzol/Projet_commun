@@ -155,6 +155,12 @@ function traiterProximite(int $valeur, int $machineId, string $teamId): void
 {
     global $bufferProx;
 
+    // Zone ambiguë : valeur entre SEUIL_BAS et SEUIL = capteur trop proche.
+    // On ignore la lecture pour ne pas basculer vers LIBRE par erreur.
+    if ($valeur >= SEUIL_BAS && $valeur < SEUIL) {
+        return;
+    }
+
     $occupe = ($valeur >= SEUIL);
 
     $bufferProx[] = $occupe;

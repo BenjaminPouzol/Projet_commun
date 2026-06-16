@@ -104,8 +104,16 @@ while (true) {
                 $trame = trim($ligne);
 
                 if (preg_match('/^PROXIMITE:(\d+)$/', $trame, $m)) {
-                    $valeur   = (int) $m[1];
-                    $occupe   = ($valeur >= SEUIL);
+                    $valeur = (int) $m[1];
+
+                    // Zone ambiguë : trop proche pour être détecté (courbe en U du capteur IR).
+                    // On ignore la lecture pour ne pas basculer vers LIBRE par erreur.
+                    if ($valeur >= SEUIL_BAS && $valeur < SEUIL) {
+                        $ligne = '';
+                        continue;
+                    }
+
+                    $occupe = ($valeur >= SEUIL);
 
                     // Anti-rebond : fenêtre glissante de DEBOUNCE lectures
                     $buffer[] = $occupe;
