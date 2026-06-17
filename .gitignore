@@ -9,6 +9,11 @@
 # Logs
 *.log
 
+# Fichiers d'état runtime capteur (générés automatiquement)
+capteur_heartbeat.txt
+capteur_pid.txt
+capteur_disabled.txt
+
 # Fichiers système
 .DS_Store
 Thumbs.db
