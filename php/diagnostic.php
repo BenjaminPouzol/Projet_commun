@@ -12,6 +12,7 @@ $flashType = '';
 $batFile       = realpath(__DIR__ . '/../demarrer_capteur.bat') ?: '';
 $heartbeatFile = __DIR__ . '/../capteur_heartbeat.txt';
 $pidFile       = __DIR__ . '/../capteur_pid.txt';
+$disabledFile  = __DIR__ . '/../capteur_disabled.txt';
 
 function capteurActif(string $hbFile): bool
 {
@@ -29,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifierTokenCSRF($_POST['csrf_toke
             $flashMsg  = 'Fichier demarrer_capteur.bat introuvable.';
             $flashType = 'erreur';
         } else {
-            // Lancer en arrière-plan (détaché d'Apache)
+            @unlink($disabledFile);
             shell_exec('start "" /B "' . $batFile . '"');
             $flashMsg  = 'Démarrage en cours… patientez 5 secondes puis rechargez la page.';
             $flashType = 'succes';
@@ -37,6 +38,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifierTokenCSRF($_POST['csrf_toke
     }
 
     if ($action === 'arreter') {
+        // Créer le drapeau pour bloquer le redémarrage automatique du .bat
+        file_put_contents($disabledFile, date('Y-m-d H:i:s'));
+
         $killed = false;
         if (file_exists($pidFile)) {
             $pid = (int) trim(file_get_contents($pidFile) ?: '0');
@@ -45,7 +49,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifierTokenCSRF($_POST['csrf_toke
                 $killed = true;
             }
         }
-        // Supprimer les fichiers de supervision
         @unlink($heartbeatFile);
         @unlink($pidFile);
         $flashMsg  = $killed ? 'Script arrêté (PID tué).' : 'Aucun PID trouvé — script peut-être déjà arrêté.';
@@ -114,29 +117,7 @@ $com3Ok    = in_array('COM3', array_map('trim', $comDispo));
 </head>
 <body>
 
-<nav class="navbar">
-  <a class="navbar-brand" href="dashboard.php">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="2" y="3" width="20" height="14" rx="2"/>
-      <line x1="8" y1="21" x2="16" y2="21"/>
-      <line x1="12" y1="17" x2="12" y2="21"/>
-    </svg>
-    Salle de sport — Diagnostic
-  </a>
-  <ul class="navbar-nav">
-    <li><a href="dashboard.php">Proximité G9E</a></li>
-    <li><a href="dashboard_global.php">Vue globale</a></li>
-    <li><a href="diagnostic.php" class="active">Diagnostic</a></li>
-  </ul>
-  <div class="navbar-user">
-    <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?></span>
-    <a href="deconnexion.php"
-       style="color:rgba(255,255,255,.65);font-size:.82rem;padding:.3rem .65rem;
-              border:1px solid rgba(255,255,255,.2);border-radius:6px;text-decoration:none">
-      Déconnexion
-    </a>
-  </div>
-</nav>
+<?php require_once __DIR__ . '/../includes/navbar.php'; ?>
 
 <main>
 

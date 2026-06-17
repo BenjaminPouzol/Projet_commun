@@ -265,31 +265,7 @@ $lastUpdate     = $machine['last_update']
 </head>
 <body>
 
-<!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
-<nav class="navbar">
-  <a class="navbar-brand" href="dashboard.php">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="2" y="3" width="20" height="14" rx="2"/>
-      <line x1="8" y1="21" x2="16" y2="21"/>
-      <line x1="12" y1="17" x2="12" y2="21"/>
-    </svg>
-    Salle de sport — Capteur de proximité
-  </a>
-  <ul class="navbar-nav">
-    <li><a href="dashboard.php" class="active">Proximité G9E</a></li>
-    <li><a href="dashboard_global.php">Vue globale</a></li>
-    <li><a href="../public/actionneurs.php">Actionneurs</a></li>
-    <li><a href="diagnostic.php">Diagnostic</a></li>
-  </ul>
-  <div class="navbar-user">
-    <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?></span>
-    <a href="deconnexion.php"
-       style="color:rgba(255,255,255,.65);font-size:.82rem;padding:.3rem .65rem;
-              border:1px solid rgba(255,255,255,.2);border-radius:6px;text-decoration:none">
-      Déconnexion
-    </a>
-  </div>
-</nav>
+<?php require_once __DIR__ . '/../includes/navbar.php'; ?>
 
 <main>
 
@@ -466,6 +442,40 @@ $lastUpdate     = $machine['last_update']
   </div>
   <?php endif; ?>
 
+  <!-- ── Contrôle du capteur ──────────────────────────────────────────────── -->
+  <?php
+    $hbFile  = __DIR__ . '/../capteur_heartbeat.txt';
+    $capteurActifNow = file_exists($hbFile) && (time() - filemtime($hbFile)) < 15;
+    $hbAgeNow = file_exists($hbFile) ? (time() - filemtime($hbFile)) : null;
+  ?>
+  <div class="card mb-3" style="border-left:4px solid <?= $capteurActifNow ? 'var(--vert-ok)' : 'var(--rouge-alerte)' ?>" id="js-capteur-card">
+    <div class="section-titre" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem">
+      <h2 style="font-size:1rem;margin:0">Contrôle du capteur</h2>
+      <span id="js-capteur-badge"
+            style="padding:.2rem .7rem;border-radius:99px;font-size:.78rem;font-weight:700;
+                   background:<?= $capteurActifNow ? '#166534' : '#7f1d1d' ?>;
+                   color:<?= $capteurActifNow ? '#bbf7d0' : '#fca5a5' ?>">
+        <?= $capteurActifNow ? '● Actif' : '● Inactif' ?>
+      </span>
+    </div>
+    <p id="js-capteur-info" class="text-muted" style="font-size:.82rem;margin:.5rem 0 1rem">
+      <?php if ($capteurActifNow): ?>
+        Heartbeat reçu il y a <strong><?= $hbAgeNow ?>s</strong>.
+      <?php elseif ($hbAgeNow !== null): ?>
+        Dernier heartbeat il y a <strong><?= $hbAgeNow ?>s</strong> — script arrêté ou planté.
+      <?php else: ?>
+        Script jamais démarré depuis ce serveur.
+      <?php endif; ?>
+    </p>
+    <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+      <button id="js-btn-toggle" onclick="toggleCapteur()"
+              class="btn <?= $capteurActifNow ? 'btn-danger' : 'btn-succes' ?>">
+        <?= $capteurActifNow ? 'Désactiver le capteur' : 'Activer le capteur' ?>
+      </button>
+      <span id="js-capteur-msg" style="font-size:.82rem;color:#8a9aab"></span>
+    </div>
+  </div>
+
   <!-- ── Forçage manuel ────────────────────────────────────────────────────── -->
   <div class="card" style="border-left:4px solid var(--ambre)">
     <div class="section-titre">
@@ -564,6 +574,67 @@ $lastUpdate     = $machine['last_update']
   }
 
   setInterval(refresh, 1000);
+})();
+
+// ── Contrôle capteur (activer / désactiver) ──────────────────────────────────
+const CSRF_TOKEN = <?= json_encode(genererTokenCSRF(), JSON_UNESCAPED_UNICODE) ?>;
+
+function updateCapteurUI(actif, message) {
+  const card  = document.getElementById('js-capteur-card');
+  const badge = document.getElementById('js-capteur-badge');
+  const info  = document.getElementById('js-capteur-info');
+  const btn   = document.getElementById('js-btn-toggle');
+  const msg   = document.getElementById('js-capteur-msg');
+
+  card.style.borderLeftColor = actif ? 'var(--vert-ok)' : 'var(--rouge-alerte)';
+  badge.style.background = actif ? '#166534' : '#7f1d1d';
+  badge.style.color      = actif ? '#bbf7d0' : '#fca5a5';
+  badge.textContent      = actif ? '● Actif' : '● Inactif';
+  btn.className          = 'btn ' + (actif ? 'btn-danger' : 'btn-succes');
+  btn.textContent        = actif ? 'Désactiver le capteur' : 'Activer le capteur';
+  msg.textContent = message ?? '';
+}
+
+async function toggleCapteur() {
+  const btn    = document.getElementById('js-btn-toggle');
+  const actif  = btn.textContent.trim().startsWith('Désactiver');
+  const action = actif ? 'arreter' : 'demarrer';
+
+  btn.disabled = true;
+  document.getElementById('js-capteur-msg').textContent = 'En cours…';
+
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 20000);
+  try {
+    const body = new URLSearchParams({ action, csrf_token: CSRF_TOKEN });
+    const r    = await fetch('api_capteur.php', { method: 'POST', body, signal: abort.signal });
+    const d    = await r.json();
+    updateCapteurUI(d.actif, d.message);
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Délai dépassé — vérifiez la page Diagnostic.' : 'Erreur réseau.';
+    document.getElementById('js-capteur-msg').textContent = msg;
+  } finally {
+    clearTimeout(timer);
+    btn.disabled = false;
+  }
+}
+
+// Polling léger de l'état du daemon toutes les 5 s
+(async function pollCapteur() {
+  try {
+    const r = await fetch('api_capteur.php?action=status', { cache: 'no-store' });
+    const d = await r.json();
+    const info = document.getElementById('js-capteur-info');
+    if (info) {
+      info.innerHTML = d.actif
+        ? 'Heartbeat reçu il y a <strong>' + (d.age ?? '?') + 's</strong>.'
+        : (d.age !== null
+            ? 'Dernier heartbeat il y a <strong>' + d.age + 's</strong> — script arrêté ou planté.'
+            : 'Script jamais démarré depuis ce serveur.');
+    }
+    updateCapteurUI(d.actif, d.actif ? 'Heartbeat reçu.' : '');
+  } catch (_) {}
+  setTimeout(pollCapteur, 5000);
 })();
 </script>
 

@@ -1,10 +1,19 @@
 <?php
 // Connexion PDO – crée la base et les tables automatiquement au premier accès
 
-define('DB_HOST',   'localhost');
-define('DB_NAME',   'iot_machine');
-define('DB_USER',   'root');
-define('DB_PASS',   '');
+// BDD distante (décommenter quand l'accès depuis nat-16.isep.fr sera autorisé) :
+// define('DB_HOST', 'node.solyzon.com');
+// define('DB_PORT', 3307);
+// define('DB_NAME', 'sallesdesportintelligente_G9');
+// define('DB_USER', 'sallesdesportintelligente_G9');
+// define('DB_PASS', 'iYU_M.Awgn!mhKW5');
+
+// BDD locale (actif pour l'instant)
+define('DB_HOST', 'localhost');
+define('DB_PORT', 3306);
+define('DB_NAME', 'iot_machine');
+define('DB_USER', 'root');
+define('DB_PASS', '');
 define('MACHINE_ID', 1);
 define('SEUIL',      500);   // Valeur ADC : >= SEUIL → machine OCCUPÉE
 define('SEUIL_BAS',  100);   // < SEUIL_BAS → vraiment libre ; entre les deux = trop proche, état maintenu
@@ -15,13 +24,10 @@ function getDB(): PDO
     if ($pdo !== null) return $pdo;
 
     $boot = new PDO(
-        'mysql:host=' . DB_HOST . ';charset=utf8mb4',
+        'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4',
         DB_USER, DB_PASS,
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
     );
-    $boot->exec("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "`
-                 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    $boot->exec("USE `" . DB_NAME . "`");
 
     // ── Utilisateurs ─────────────────────────────────────────────────────────
     $boot->exec("
@@ -159,13 +165,7 @@ function getDB(): PDO
         ) ENGINE=InnoDB
     ");
 
-    $pdo = new PDO(
-        'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
-        DB_USER, DB_PASS,
-        [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]
-    );
+    $boot->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $pdo = $boot;
     return $pdo;
 }

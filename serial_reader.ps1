@@ -8,12 +8,13 @@ $TEAM      = "G9E"
 $MACHINE   = 1
 $SEUIL_ADC        = 200
 $DEBOUNCE_ENTREE  = 3    # lectures pour passer LIBRE -> OCCUPEE (rapide)
-$DEBOUNCE_SORTIE  = 20   # lectures pour passer OCCUPEE -> LIBRE (lent, evite faux LIBRE si trop proche)
+$DEBOUNCE_SORTIE  = 8    # lectures pour passer OCCUPEE -> LIBRE (~1.5 s a 5 Hz)
 
 # Fichiers de supervision (lus par diagnostic.php)
 $scriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$heartbeatFile = Join-Path $scriptDir "capteur_heartbeat.txt"
-$pidFile       = Join-Path $scriptDir "capteur_pid.txt"
+$heartbeatFile  = Join-Path $scriptDir "capteur_heartbeat.txt"
+$pidFile        = Join-Path $scriptDir "capteur_pid.txt"
+$disabledFile   = Join-Path $scriptDir "capteur_disabled.txt"
 
 # Ecrire le PID pour permettre l'arret depuis le site
 [System.IO.File]::WriteAllText($pidFile, [string]$PID)
@@ -36,6 +37,12 @@ $dernierEtat      = $null
 $lastHeartbeat    = [DateTime]::MinValue
 
 while ($true) {
+    # Arrêt propre si désactivé depuis le site
+    if (Test-Path $disabledFile) {
+        Write-Host "Arrêt demandé (capteur_disabled.txt détecté)."
+        break
+    }
+
     # Heartbeat toutes les 5 secondes pour indiquer que le script est vivant
     if (([DateTime]::Now - $lastHeartbeat).TotalSeconds -ge 5) {
         [System.IO.File]::WriteAllText($heartbeatFile, (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))

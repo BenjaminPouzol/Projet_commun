@@ -266,29 +266,7 @@ $nbAlertes  = count($alertesActives);
 </head>
 <body>
 
-<!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
-<nav class="navbar">
-  <a class="navbar-brand" href="dashboard_global.php">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-      <polyline points="9 22 9 12 15 12 15 22"/>
-    </svg>
-    Salle de sport — Dashboard global
-  </a>
-  <ul class="navbar-nav">
-    <li><a href="dashboard_global.php" class="active">Vue globale</a></li>
-    <li><a href="dashboard.php">Proximité G9E</a></li>
-    <li><a href="../public/actionneurs.php">Actionneurs</a></li>
-  </ul>
-  <div class="navbar-user">
-    <span><?= htmlspecialchars($_SESSION['utilisateur_nom'] ?? '', ENT_QUOTES, 'UTF-8') ?></span>
-    <a href="deconnexion.php"
-       style="color:rgba(255,255,255,.65);font-size:.82rem;padding:.3rem .65rem;
-              border:1px solid rgba(255,255,255,.2);border-radius:6px;text-decoration:none">
-      Déconnexion
-    </a>
-  </div>
-</nav>
+<?php require_once __DIR__ . '/../includes/navbar.php'; ?>
 
 <main>
 
@@ -460,33 +438,6 @@ $nbAlertes  = count($alertesActives);
     <?php endif; ?>
   </div>
 
-  <!-- ── Historique des dernières lectures ─────────────────────────────────── -->
-  <?php if (!empty($derniersLog)): ?>
-  <div class="card">
-    <div class="section-titre">
-      <h2 style="font-size:1rem">Dernières lectures capteurs</h2>
-      <a href="api_sensors.php/history?hours=1" class="btn btn-secondaire btn-sm"
-         target="_blank" rel="noopener">JSON API ↗</a>
-    </div>
-    <div class="table-wrapper">
-      <table>
-        <thead>
-          <tr><th>Heure</th><th>Capteur</th><th>Valeur</th><th>Unité</th></tr>
-        </thead>
-        <tbody>
-          <?php foreach ($derniersLog as $l): ?>
-          <tr>
-            <td><?= htmlspecialchars(date('H:i:s', strtotime($l['timestamp']))) ?></td>
-            <td><span class="badge badge-info"><?= htmlspecialchars($l['sensor_type']) ?></span></td>
-            <td><?= htmlspecialchars(number_format((float)$l['valeur'], 1, ',', ' ')) ?></td>
-            <td><?= htmlspecialchars($l['unite']) ?></td>
-          </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <?php endif; ?>
 
 </main>
 
